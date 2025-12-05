@@ -1,7 +1,7 @@
 {
   "id": "recall-knowledge-pf2e",
   "title": "Quick Recall Knowledge (PF2e)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "compatibility": {
     "minimum": "13",
     "verified": "13.348"
