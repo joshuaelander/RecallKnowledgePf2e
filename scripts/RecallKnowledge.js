@@ -18,22 +18,33 @@ Hooks.once('ready', () => {
 });
 
 // Add button to scene controls (show to all users so they can open the dialog)
-Hooks.on('getSceneControlButtons', (controls) => {
-  // Find the token control group (name may vary slightly across versions)
-  const tokenControls = controls.find(c => c.name === 'token') || controls.find(c => c.name === 'tokens');
-  if (tokenControls) {
-    // Avoid adding duplicate tool entries (e.g., on hot-reload)
-    const exists = tokenControls.tools.some(t => t.name === 'recall-knowledge');
-    if (!exists) {
-      tokenControls.tools.push({
-        name: 'recall-knowledge',
-        title: 'Recall Knowledge Check',
-        icon: 'fas fa-brain',
-        button: true,
-        onClick: () => openRecallKnowledgeDialog()
-      });
-    }
+Hooks.on('getSceneControlButtons', (controlsPayload) => {
+  // Defensive normalization of payload into an array
+  let controlsArray;
+  if (Array.isArray(controlsPayload)) {
+    controlsArray = controlsPayload;
+  } else if (controlsPayload && Array.isArray(controlsPayload.controls)) {
+    controlsArray = controlsPayload.controls;
+  } else if (controlsPayload && typeof controlsPayload === 'object') {
+    controlsArray = Object.values(controlsPayload).filter(v => v && v.name);
+  } else {
+    return;
   }
+
+  const tokenControls = controlsArray.find(c => c.name === 'token' || c.name === 'tokens');
+  if (!tokenControls) return;
+
+  tokenControls.tools = tokenControls.tools ?? [];
+  if (tokenControls.tools.some(t => t.name === 'recall-knowledge')) return;
+
+  tokenControls.tools.push({
+    name: 'recall-knowledge',
+    title: 'Recall Knowledge Check',
+    icon: 'fas fa-brain',
+    button: true,
+    visible: true,
+    onClick: () => openRecallKnowledgeDialog()
+  });
 });
 
 async function createRecallKnowledgeMacro() {
