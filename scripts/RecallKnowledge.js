@@ -94,7 +94,6 @@ async function createAggregatedRecallMessage(results, dc, creatureName) {
       <h3>${title}</h3>
       ${rows}
       <hr>
-      <p><em>GM: Provide information based on each actor's degree of success.</em></p>
     </div>
   `;
 
