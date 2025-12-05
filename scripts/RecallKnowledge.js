@@ -17,36 +17,6 @@ Hooks.once('ready', () => {
   createRecallKnowledgeMacro();
 });
 
-// Add button to scene controls (show to all users so they can open the dialog)
-Hooks.on('getSceneControlButtons', (controlsPayload) => {
-  // Defensive normalization of payload into an array
-  let controlsArray;
-  if (Array.isArray(controlsPayload)) {
-    controlsArray = controlsPayload;
-  } else if (controlsPayload && Array.isArray(controlsPayload.controls)) {
-    controlsArray = controlsPayload.controls;
-  } else if (controlsPayload && typeof controlsPayload === 'object') {
-    controlsArray = Object.values(controlsPayload).filter(v => v && v.name);
-  } else {
-    return;
-  }
-
-  const tokenControls = controlsArray.find(c => c.name === 'token' || c.name === 'tokens');
-  if (!tokenControls) return;
-
-  tokenControls.tools = tokenControls.tools ?? [];
-  if (tokenControls.tools.some(t => t.name === 'recall-knowledge')) return;
-
-  tokenControls.tools.push({
-    name: 'recall-knowledge',
-    title: 'Recall Knowledge Check',
-    icon: 'fas fa-brain',
-    button: true,
-    visible: true,
-    onClick: () => openRecallKnowledgeDialog()
-  });
-});
-
 async function createRecallKnowledgeMacro() {
   try {
     if (!game.user.isGM) return; // Only GMs create macros by default
@@ -104,7 +74,6 @@ async function createAggregatedRecallMessage(results, dc, creatureName) {
     <div class="recall-knowledge-result" style="padding:6px;">
       <h3>${title}</h3>
       ${rows}
-      <hr>
     </div>
   `;
 
