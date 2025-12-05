@@ -1,1 +1,25 @@
-
+{
+  "id": "RecallKnowledgePf2e",
+  "title": "Quick Recall Knowledge (PF2e)",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "13"
+  },
+  "systems": ["pf2e"],
+  "url": "https://github.com/joshuaelander/RecallKnowledgePf2e",
+  "manifest": "https://raw.githubusercontent.com/joshuaelander/RecallKnowledgePf2e/main/module.json",
+  "download": "https://github.com/joshuaelander/RecallKnowledgePf2e/archive/refs/heads/main.zip",
+  "esmodules": [
+    "scripts/RecallKnowledge.js"
+  ],
+  "styles": [
+    "styles/RecallKnowledge.css"
+  ],
+  "authors": [
+    {
+      "name": "Joshua Elander"
+    }
+  ],
+  "description": "Quick Recall Knowledge checks with secret rolls for PF2e GMs"
+}
