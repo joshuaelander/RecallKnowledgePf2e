@@ -17,33 +17,36 @@ Hooks.once('ready', () => {
   createRecallKnowledgeMacro();
 });
 
-// Add button to scene controls (GM only)
+// Add button to scene controls (show to all users so they can open the dialog)
 Hooks.on('getSceneControlButtons', (controls) => {
-  if (!game.user.isGM) return;
-
-  const tokenControls = controls.find(c => c.name === "token");
+  // Find the token control group (name may vary slightly across versions)
+  const tokenControls = controls.find(c => c.name === 'token') || controls.find(c => c.name === 'tokens');
   if (tokenControls) {
-    tokenControls.tools.push({
-      name: "recall-knowledge",
-      title: "Recall Knowledge Check",
-      icon: "fas fa-brain",
-      button: true,
-      onClick: () => openRecallKnowledgeDialog()
-    });
+    // Avoid adding duplicate tool entries (e.g., on hot-reload)
+    const exists = tokenControls.tools.some(t => t.name === 'recall-knowledge');
+    if (!exists) {
+      tokenControls.tools.push({
+        name: 'recall-knowledge',
+        title: 'Recall Knowledge Check',
+        icon: 'fas fa-brain',
+        button: true,
+        onClick: () => openRecallKnowledgeDialog()
+      });
+    }
   }
 });
 
 async function createRecallKnowledgeMacro() {
   try {
     if (!game.user.isGM) return; // Only GMs create macros by default
-    const existingMacro = game.macros.find(m => m.name === "Recall Knowledge" && m.command?.includes("game.recallKnowledge.openDialog"));
+    const existingMacro = game.macros.find(m => m.name === 'Recall Knowledge' && m.command?.includes('game.recallKnowledge.openDialog'));
     if (existingMacro) return;
 
     await Macro.create({
-      name: "Recall Knowledge",
-      type: "script",
-      img: "icons/skills/trades/academics-study-reading-book.webp",
-      command: "game.recallKnowledge.openDialog();",
+      name: 'Recall Knowledge',
+      type: 'script',
+      img: 'icons/skills/trades/academics-study-reading-book.webp',
+      command: 'game.recallKnowledge.openDialog();',
       folder: null,
       flags: {}
     });
@@ -61,31 +64,34 @@ async function createRecallKnowledgeMacro() {
 async function createAggregatedRecallMessage(results, dc, creatureName) {
   // Determine color based on result
   const colorMap = {
-    "Critical Success": "#00aa00",
-    "Success": "#0066cc",
-    "Failure": "#cc6600",
-    "Critical Failure": "#cc0000"
+    'Critical Success': '#00aa00',
+    'Success': '#0066cc',
+    'Failure': '#cc6600',
+    'Critical Failure': '#cc0000'
   };
 
   // Build HTML summary table
   let rows = '';
   for (const res of results) {
-    const color = colorMap[res.degree] || "#000000";
+    const color = colorMap[res.degree] || '#000000';
     const d20display = res.d20 !== null ? `${res.d20}` : '—';
     const breakdown = res.d20 !== null ? `${d20display} + ${res.total - res.d20}` : `${res.total}`;
     rows += `
-      <div class=\"recall-knowledge-row\" style=\"border-left: 4px solid ${color}; padding-left:8px; margin-bottom:6px;\">
+      <div class="recall-knowledge-row" style="border-left: 4px solid ${color}; padding-left:8px; margin-bottom:6px;">
         <strong>${escapeHtml(res.actorName)}</strong> — ${escapeHtml(res.skillLabel)}:
         <span>${res.total} (${escapeHtml(breakdown)})</span>
         &nbsp;|&nbsp;
-        <span style=\"color:${color}; font-weight:bold;\">${escapeHtml(res.degree)}</span>
+        <span style="color:${color}; font-weight:bold;">${escapeHtml(res.degree)}</span>
       </div>
     `;
   }
 
+  // Title: include creature name only if provided (otherwise show generic title)
+  const title = creatureName ? `Recall Knowledge: ${escapeHtml(creatureName)} (DC ${dc})` : `Recall Knowledge (DC ${dc})`;
+
   const content = `
-    <div class=\"recall-knowledge-result\" style=\"padding:6px;\">
-      <h3>Recall Knowledge: ${escapeHtml(creatureName)} (DC ${dc})</h3>
+    <div class="recall-knowledge-result" style="padding:6px;">
+      <h3>${title}</h3>
       ${rows}
       <hr>
       <p><em>GM: Provide information based on each actor's degree of success.</em></p>
@@ -112,10 +118,22 @@ async function createAggregatedRecallMessage(results, dc, creatureName) {
  */
 async function performRecallKnowledge(html) {
   // Get form values
-  const skillKey = html.find('[name=\"skill\"]').val();
-  const dcValue = html.find('[name=\"dc\"]').val();
+  const skillKey = html.find('[name="skill"]').val();
+  const dcValue = html.find('[name="dc"]').val();
   const dc = parseInt(dcValue, 10) || 0;
-  const creatureName = html.find('[name=\"creature\"]').val() || "Unknown Creature";
+  const creatureInput = (html.find('[name="creature"]').val() || '').trim();
+
+  // Determine creature name: prefer explicit input, otherwise use first targeted token (if any), otherwise empty
+  let creatureName = '';
+  if (creatureInput) {
+    creatureName = creatureInput;
+  } else {
+    const targets = Array.from(game.user.targets ?? []);
+    if (targets.length > 0) {
+      const t = targets[0];
+      creatureName = t?.name ?? t?.actor?.name ?? '';
+    }
+  }
 
   // Determine target actors:
   // If there are controlled tokens, use their actors (unique).
@@ -158,7 +176,7 @@ async function performRecallKnowledge(html) {
   }
 
   if (targetActors.length === 0) {
-    ui.notifications.error("No target actors found (no controlled tokens and no party actors).{}");
+    ui.notifications.error('No target actors found (no controlled tokens and no party actors).');
     return;
   }
 
@@ -177,7 +195,7 @@ async function performRecallKnowledge(html) {
     } catch (err) {
       console.error('Recall Knowledge | Roll failed for', actor.name, err);
       // Provide a fallback "failed roll" object
-      roll = { total: 0, dice: [], toJSON: () => ({}) };
+      roll = { total: 0, dice: [], toJSON: () => ({}) }; 
     }
 
     // Safely extract d20 raw result
@@ -208,7 +226,7 @@ async function performRecallKnowledge(html) {
     results = await Promise.all(rollPromises);
   } catch (err) {
     console.error('Recall Knowledge | Error evaluating rolls:', err);
-    ui.notifications.error("Error performing one or more rolls.");
+    ui.notifications.error('Error performing one or more rolls.');
     return;
   }
 
@@ -222,10 +240,10 @@ async function performRecallKnowledge(html) {
 function calculateDegreeOfSuccess(total, dc) {
   const difference = total - dc;
 
-  if (difference >= 10) return "Critical Success";
-  if (difference >= 0) return "Success";
-  if (difference >= -9) return "Failure"; // failure for difference -9..-1
-  return "Critical Failure"; // difference <= -10
+  if (difference >= 10) return 'Critical Success';
+  if (difference >= 0) return 'Success';
+  if (difference >= -9) return 'Failure'; // failure for difference -9..-1
+  return 'Critical Failure'; // difference <= -10
 }
 
 /**
@@ -250,7 +268,7 @@ function openRecallKnowledgeDialog() {
   // Build skill options HTML
   let skillOptions = '';
   for (let [key, label] of Object.entries(skills)) {
-    skillOptions += `<option value=\"${escapeHtml(key)}\">${escapeHtml(label)}</option>`;
+    skillOptions += `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
   }
 
   // Determine if a "party" actor folder exists (case-insensitive)
@@ -261,26 +279,26 @@ function openRecallKnowledgeDialog() {
   // If no tokens are controlled, it falls back to the party (player characters) or the 'party' actor folder if present.
   const selectionNote = (canvas?.tokens?.controlled?.length > 0)
     ? `<p><em>Using ${canvas.tokens.controlled.length} selected token(s).</em></p>`
-    : (partyFolder ? `<p><em>No tokens selected — will use actors in the \"${escapeHtml(partyFolder.name)}\" folder.</em></p>`
+    : (partyFolder ? `<p><em>No tokens selected — will use actors in the "${escapeHtml(partyFolder.name)}" folder.</em></p>`
       : `<p><em>No tokens selected — will use the whole party (player characters / actors with player owners).</em></p>`);
 
   const content = `
     <form>
-      <div class=\"form-group\">
+      <div class="form-group">
         <label>Skill:</label>
-        <select id=\"skill-select\" name=\"skill\">
+        <select id="skill-select" name="skill">
           ${skillOptions}
         </select>
       </div>
-      <div class=\"form-group\">
+      <div class="form-group">
         <label>DC:</label>
-        <input type=\"number\" id=\"dc-input\" name=\"dc\" value=\"15\" min=\"1\" max=\"100\"/>
+        <input type="number" id="dc-input" name="dc" value="15" min="1" max="100"/>
       </div>
-      <div class=\"form-group\">
+      <div class="form-group">
         <label>Creature Name (optional):</label>
-        <input type=\"text\" id=\"creature-name\" name=\"creature\" placeholder=\"Unknown Creature\"/>
+        <input type="text" id="creature-name" name="creature" placeholder="(optional)"/>
       </div>
-      <div class=\"form-group\">
+      <div class="form-group">
         ${selectionNote}
         <p><em>Note: If you want to check specific actors, select their tokens before opening this dialog.</em></p>
       </div>
@@ -288,20 +306,20 @@ function openRecallKnowledgeDialog() {
   `;
 
   new Dialog({
-    title: "Recall Knowledge Check (Multiple Targets)",
+    title: 'Recall Knowledge Check (Multiple Targets)',
     content: content,
     buttons: {
       roll: {
-        icon: '<i class=\"fas fa-dice-d20\"></i>',
-        label: "Roll for Targets",
+        icon: '<i class="fas fa-dice-d20"></i>',
+        label: 'Roll for Targets',
         callback: (html) => performRecallKnowledge(html)
       },
       cancel: {
-        icon: '<i class=\"fas fa-times\"></i>',
-        label: "Cancel"
+        icon: '<i class="fas fa-times"></i>',
+        label: 'Cancel'
       }
     },
-    default: "roll"
+    default: 'roll'
   }).render(true);
 }
 
