@@ -1,0 +1,18 @@
+.recall-knowledge-result {
+  margin: 8px 0;
+}
+
+.recall-knowledge-result h3 {
+  margin-top: 0;
+  color: #4b4a44;
+}
+
+.recall-knowledge-result p {
+  margin: 4px 0;
+}
+
+.recall-knowledge-result hr {
+  border: none;
+  border-top: 1px solid #ccc;
+  margin: 8px 0;
+}
