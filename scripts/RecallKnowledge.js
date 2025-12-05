@@ -1,4 +1,5 @@
 // RecallKnowledge.js (Patched for Foundry V13 + PF2e)
+// Supports multiple selected actors (controlled tokens) or the whole party if none selected.
 
 Hooks.once('init', () => {
   console.log('Recall Knowledge | Initializing');
@@ -54,10 +55,10 @@ async function createRecallKnowledgeMacro() {
 }
 
 /**
- * Create the secret chat message for the recall knowledge check.
- * The roll is whispered to GMs only and marked blind so players don't see it.
+ * Create the secret aggregated chat message for multiple recall knowledge checks.
+ * Whispered to all GMs (GM-only).
  */
-async function createRecallKnowledgeMessage(actor, skillLabel, roll, dc, degreeOfSuccess, creatureName) {
+async function createAggregatedRecallMessage(results, dc, creatureName) {
   // Determine color based on result
   const colorMap = {
     "Critical Success": "#00aa00",
@@ -65,111 +66,139 @@ async function createRecallKnowledgeMessage(actor, skillLabel, roll, dc, degreeO
     "Failure": "#cc6600",
     "Critical Failure": "#cc0000"
   };
-  const color = colorMap[degreeOfSuccess] || "#000000";
 
-  // Safely extract the d20 raw result (if present)
-  let d20Result = null;
-  try {
-    const d20Term = roll.dice?.find(d => d.faces === 20);
-    d20Result = d20Term?.results?.[0]?.result ?? null;
-  } catch (e) {
-    d20Result = null;
+  // Build HTML summary table
+  let rows = '';
+  for (const res of results) {
+    const color = colorMap[res.degree] || "#000000";
+    const d20display = res.d20 !== null ? `${res.d20}` : '—';
+    const breakdown = res.d20 !== null ? `${d20display} + ${res.total - res.d20}` : `${res.total}`;
+    rows += `
+      <div class="recall-knowledge-row" style="border-left: 4px solid ${color}; padding-left:8px; margin-bottom:6px;">
+        <strong>${escapeHtml(res.actorName)}</strong> — ${escapeHtml(res.skillLabel)}:
+        <span>${res.total} (${escapeHtml(breakdown)})</span>
+        &nbsp;|&nbsp;
+        <span style="color:${color}; font-weight:bold;">${escapeHtml(res.degree)}</span>
+      </div>
+    `;
   }
 
-  // Build a visible GM-only content
-  const gmContent = `
-    <div class="recall-knowledge-result" style="border-left: 4px solid ${color}; padding-left: 8px;">
-      <h3>Recall Knowledge: ${escapeHtml(creatureName)}</h3>
-      <p><strong>Actor:</strong> ${escapeHtml(actor.name)}</p>
-      <p><strong>Skill:</strong> ${escapeHtml(skillLabel)}</p>
-      <p><strong>Roll:</strong> ${roll.total}${d20Result !== null ? ` (${d20Result} + ${roll.total - d20Result})` : ''}</p>
-      <p><strong>DC:</strong> ${dc}</p>
-      <p><strong>Result:</strong> <span style="color: ${color}; font-weight: bold;">${degreeOfSuccess}</span></p>
+  const content = `
+    <div class="recall-knowledge-result" style="padding:6px;">
+      <h3>Recall Knowledge: ${escapeHtml(creatureName)} (DC ${dc})</h3>
+      ${rows}
       <hr>
-      <p><em>GM: Provide information based on the degree of success.</em></p>
+      <p><em>GM: Provide information based on each actor's degree of success.</em></p>
     </div>
   `;
 
   // Whisper recipients: all GM user ids
   const gmIds = game.users.filter(u => u.isGM).map(u => u.id);
 
-  // Use roll.toMessage to correctly attach the roll and whisper it to GMs.
-  // Use flavor for a short visible description (for GMs only because we whisper).
-  try {
-    await roll.toMessage({
-      speaker: ChatMessage.getSpeaker({ actor }),
-      flavor: `Recall Knowledge: ${escapeHtml(creatureName)}`,
-      content: gmContent,
-      whisper: gmIds,
-      blind: true
-    });
-    ui.notifications.info(`Recall Knowledge check made for ${actor.name}`);
-  } catch (err) {
-    // Fallback to creating a ChatMessage manually if toMessage fails
-    console.error('Recall Knowledge | roll.toMessage failed, falling back to ChatMessage.create', err);
-    await ChatMessage.create({
-      user: game.user.id,
-      speaker: ChatMessage.getSpeaker({ actor }),
-      content: gmContent,
-      whisper: gmIds,
-      blind: true,
-      type: CONST.CHAT_MESSAGE_TYPES.ROLL,
-      roll: roll.toJSON?.() ?? roll,
-      sound: CONFIG.sounds?.dice
-    });
-    ui.notifications.info(`Recall Knowledge check made for ${actor.name}`);
-  }
+  // Create a single GM-only chat message with the aggregated results
+  await ChatMessage.create({
+    user: game.user.id,
+    speaker: ChatMessage.getSpeaker({ actor: null }),
+    content: content,
+    whisper: gmIds,
+    blind: true
+  });
+
+  ui.notifications.info(`Recall Knowledge checks completed for ${results.length} actor(s).`);
 }
 
 /**
- * Perform the recall knowledge check using values from the dialog HTML.
+ * Perform recall knowledge checks for multiple actors (controlled tokens or whole party if none controlled).
  */
 async function performRecallKnowledge(html) {
   // Get form values
-  const actorId = html.find('[name="actor"]').val();
   const skillKey = html.find('[name="skill"]').val();
   const dcValue = html.find('[name="dc"]').val();
   const dc = parseInt(dcValue, 10) || 0;
   const creatureName = html.find('[name="creature"]').val() || "Unknown Creature";
 
-  // Get the actor
-  const actor = game.actors.get(actorId);
-  if (!actor) {
-    ui.notifications.error("Actor not found!");
+  // Determine target actors:
+  // If there are controlled tokens, use their actors (unique).
+  // Otherwise, use the party: all actors that are PC-type (type==='character') AND have a player owner
+  const controlled = canvas?.tokens?.controlled ?? [];
+  let targetActors = [];
+
+  if (controlled.length > 0) {
+    const seen = new Set();
+    for (const token of controlled) {
+      const actor = token.actor;
+      if (actor && !seen.has(actor.id)) {
+        targetActors.push(actor);
+        seen.add(actor.id);
+      }
+    }
+  } else {
+    // Whole party fallback: player characters (actors with player owners)
+    for (const actor of game.actors.values()) {
+      if (actor && (actor.type === 'character' || actor.hasPlayerOwner)) {
+        // actor.hasPlayerOwner is true when at least one player has ownership
+        targetActors.push(actor);
+      }
+    }
+  }
+
+  if (targetActors.length === 0) {
+    ui.notifications.error("No target actors found (no controlled tokens and no party actors).");
     return;
   }
 
-  // Resolve skill modifier in a defensive way to handle PF2e data shapes
-  const skillInfo = getSkillInfo(actor, skillKey);
-  if (!skillInfo) {
-    ui.notifications.error(`Skill "${skillKey}" not found on actor ${actor.name}`);
-    return;
-  }
+  // For each actor, resolve skill info and roll
+  const rollPromises = targetActors.map(async (actor) => {
+    const skillInfo = getSkillInfo(actor, skillKey);
+    const skillLabel = skillInfo?.label ?? skillKey;
 
-  const modifier = Number(skillInfo.mod ?? skillInfo.value ?? skillInfo.total ?? 0);
-  const skillLabel = skillInfo.label ?? skillKey;
+    const modifier = Number(skillInfo?.mod ?? skillInfo?.value ?? skillInfo?.total ?? 0);
+    const safeModifier = Number.isFinite(modifier) ? modifier : 0;
+    const formula = `1d20 ${safeModifier >= 0 ? '+' : '-'} ${Math.abs(safeModifier)}`;
 
-  // Ensure modifier is a number
-  const safeModifier = Number.isFinite(modifier) ? modifier : 0;
+    let roll;
+    try {
+      roll = await new Roll(formula).evaluate({ async: true });
+    } catch (err) {
+      console.error('Recall Knowledge | Roll failed for', actor.name, err);
+      // Provide a fallback "failed roll" object
+      roll = { total: 0, dice: [], toJSON: () => ({}) };
+    }
 
-  // Build formula (use parentheses for negative modifiers)
-  const formula = `1d20 ${safeModifier >= 0 ? '+' : '-'} ${Math.abs(safeModifier)}`;
+    // Safely extract d20 raw result
+    let d20Result = null;
+    try {
+      const d20Term = roll.dice?.find(d => d.faces === 20);
+      d20Result = d20Term?.results?.[0]?.result ?? null;
+    } catch (e) {
+      d20Result = null;
+    }
 
-  // Create and evaluate the roll using the async API
-  let roll;
+    const degree = calculateDegreeOfSuccess(roll.total, dc);
+
+    return {
+      actorId: actor.id,
+      actorName: actor.name,
+      skillLabel: skillLabel,
+      total: roll.total ?? 0,
+      d20: d20Result,
+      degree: degree,
+      roll: roll
+    };
+  });
+
+  // Wait for all rolls
+  let results;
   try {
-    roll = await new Roll(formula).evaluate({ async: true });
+    results = await Promise.all(rollPromises);
   } catch (err) {
-    console.error('Recall Knowledge | Roll failed:', err);
-    ui.notifications.error("Failed to roll dice.");
+    console.error('Recall Knowledge | Error evaluating rolls:', err);
+    ui.notifications.error("Error performing one or more rolls.");
     return;
   }
 
-  // Calculate degree of success
-  const degreeOfSuccess = calculateDegreeOfSuccess(roll.total, dc);
-
-  // Create secret chat message (whispered to GM)
-  await createRecallKnowledgeMessage(actor, skillLabel, roll, dc, degreeOfSuccess, creatureName);
+  // Create aggregated GM-only chat message summarizing all actors
+  await createAggregatedRecallMessage(results, dc, creatureName);
 }
 
 /**
@@ -186,6 +215,7 @@ function calculateDegreeOfSuccess(total, dc) {
 
 /**
  * Open the Recall Knowledge dialog.
+ * Note: Actor selection is driven by controlled tokens. If none are selected, checks will be run for the whole party.
  */
 function openRecallKnowledgeDialog() {
   // Static PF2e skill map (adjust if you need additional skills)
@@ -208,14 +238,14 @@ function openRecallKnowledgeDialog() {
     skillOptions += `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
   }
 
+  // Note: We do not include an actor select. The module uses the currently controlled tokens (supports multiple).
+  // If no tokens are controlled, it falls back to the party (player characters).
+  const selectionNote = (canvas?.tokens?.controlled?.length > 0)
+    ? `<p><em>Using ${canvas.tokens.controlled.length} selected token(s).</em></p>`
+    : `<p><em>No tokens selected — will use the whole party (player characters / actors with player owners).</em></p>`;
+
   const content = `
     <form>
-      <div class="form-group">
-        <label>Select Actor:</label>
-        <select id="actor-select" name="actor">
-          ${getActorOptions()}
-        </select>
-      </div>
       <div class="form-group">
         <label>Skill:</label>
         <select id="skill-select" name="skill">
@@ -230,16 +260,20 @@ function openRecallKnowledgeDialog() {
         <label>Creature Name (optional):</label>
         <input type="text" id="creature-name" name="creature" placeholder="Unknown Creature"/>
       </div>
+      <div class="form-group">
+        ${selectionNote}
+        <p><em>Note: If you want to check specific actors, select their tokens before opening this dialog.</em></p>
+      </div>
     </form>
   `;
 
   new Dialog({
-    title: "Recall Knowledge Check",
+    title: "Recall Knowledge Check (Multiple Targets)",
     content: content,
     buttons: {
       roll: {
         icon: '<i class="fas fa-dice-d20"></i>',
-        label: "Roll",
+        label: "Roll for Targets",
         callback: (html) => performRecallKnowledge(html)
       },
       cancel: {
@@ -252,40 +286,13 @@ function openRecallKnowledgeDialog() {
 }
 
 /**
- * Build actor option elements. Prefer controlled tokens; otherwise list player characters and NPC tokens.
- */
-function getActorOptions() {
-  let options = '';
-
-  // Controlled tokens take precedence
-  const controlled = canvas?.tokens?.controlled ?? [];
-  if (controlled.length > 0) {
-    // Include each controlled token's actor (may include NPCs)
-    controlled.forEach(token => {
-      const actor = token.actor;
-      if (actor) {
-        options += `<option value="${escapeHtml(actor.id)}">${escapeHtml(actor.name)}</option>`;
-      }
-    });
-  } else {
-    // Fall back to visible actors (characters and NPCs)
-    for (const actor of game.actors.values()) {
-      // Optionally filter for player characters only: if (actor.type === 'character')
-      options += `<option value="${escapeHtml(actor.id)}">${escapeHtml(actor.name)}</option>`;
-    }
-  }
-
-  return options;
-}
-
-/**
  * Defensive helper to find skill data on a PF2e actor.
  * Returns an object with { mod, label, ... } or null if not found.
  */
 function getSkillInfo(actor, skillKey) {
   // PF2e typically stores skills at actor.system.skills[skillKey]
   const systemData = actor.system ?? actor.data?.system ?? {};
-  const skills = systemData.skills ?? systemData?.abilities ?? null;
+  const skills = systemData.skills ?? null;
 
   if (skills && skills[skillKey]) {
     return skills[skillKey];
