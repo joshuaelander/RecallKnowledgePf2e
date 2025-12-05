@@ -74,17 +74,17 @@ async function createAggregatedRecallMessage(results, dc, creatureName) {
     const d20display = res.d20 !== null ? `${res.d20}` : '—';
     const breakdown = res.d20 !== null ? `${d20display} + ${res.total - res.d20}` : `${res.total}`;
     rows += `
-      <div class="recall-knowledge-row" style="border-left: 4px solid ${color}; padding-left:8px; margin-bottom:6px;">
+      <div class=\"recall-knowledge-row\" style=\"border-left: 4px solid ${color}; padding-left:8px; margin-bottom:6px;\">
         <strong>${escapeHtml(res.actorName)}</strong> — ${escapeHtml(res.skillLabel)}:
         <span>${res.total} (${escapeHtml(breakdown)})</span>
         &nbsp;|&nbsp;
-        <span style="color:${color}; font-weight:bold;">${escapeHtml(res.degree)}</span>
+        <span style=\"color:${color}; font-weight:bold;\">${escapeHtml(res.degree)}</span>
       </div>
     `;
   }
 
   const content = `
-    <div class="recall-knowledge-result" style="padding:6px;">
+    <div class=\"recall-knowledge-result\" style=\"padding:6px;\">
       <h3>Recall Knowledge: ${escapeHtml(creatureName)} (DC ${dc})</h3>
       ${rows}
       <hr>
@@ -112,14 +112,15 @@ async function createAggregatedRecallMessage(results, dc, creatureName) {
  */
 async function performRecallKnowledge(html) {
   // Get form values
-  const skillKey = html.find('[name="skill"]').val();
-  const dcValue = html.find('[name="dc"]').val();
+  const skillKey = html.find('[name=\"skill\"]').val();
+  const dcValue = html.find('[name=\"dc\"]').val();
   const dc = parseInt(dcValue, 10) || 0;
-  const creatureName = html.find('[name="creature"]').val() || "Unknown Creature";
+  const creatureName = html.find('[name=\"creature\"]').val() || "Unknown Creature";
 
   // Determine target actors:
   // If there are controlled tokens, use their actors (unique).
-  // Otherwise, use the party: all actors that are PC-type (type==='character') AND have a player owner
+  // Otherwise, look for an actor folder named "party" (case-insensitive) and use actors in it.
+  // If no such folder or it's empty, fall back to player characters / actors with player owners.
   const controlled = canvas?.tokens?.controlled ?? [];
   let targetActors = [];
 
@@ -133,17 +134,31 @@ async function performRecallKnowledge(html) {
       }
     }
   } else {
-    // Whole party fallback: player characters (actors with player owners)
-    for (const actor of game.actors.values()) {
-      if (actor && (actor.type === 'character' || actor.hasPlayerOwner)) {
-        // actor.hasPlayerOwner is true when at least one player has ownership
-        targetActors.push(actor);
+    // Try to find an actor Folder named "party" (case-insensitive)
+    const actorFolders = game.folders.filter(f => f.type === 'Actor');
+    const partyFolder = actorFolders.find(f => (f.name || '').toLowerCase() === 'party');
+
+    if (partyFolder) {
+      for (const actor of game.actors.values()) {
+        if (actor.folder?.id === partyFolder.id) {
+          targetActors.push(actor);
+        }
+      }
+    }
+
+    // Fallback: if no party folder or it's empty, use player characters / actors with player owners
+    if (targetActors.length === 0) {
+      for (const actor of game.actors.values()) {
+        if (actor && (actor.type === 'character' || actor.hasPlayerOwner)) {
+          // actor.hasPlayerOwner is true when at least one player has ownership
+          targetActors.push(actor);
+        }
       }
     }
   }
 
   if (targetActors.length === 0) {
-    ui.notifications.error("No target actors found (no controlled tokens and no party actors).");
+    ui.notifications.error("No target actors found (no controlled tokens and no party actors).{}");
     return;
   }
 
@@ -235,32 +250,37 @@ function openRecallKnowledgeDialog() {
   // Build skill options HTML
   let skillOptions = '';
   for (let [key, label] of Object.entries(skills)) {
-    skillOptions += `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
+    skillOptions += `<option value=\"${escapeHtml(key)}\">${escapeHtml(label)}</option>`;
   }
 
+  // Determine if a "party" actor folder exists (case-insensitive)
+  const actorFolders = game.folders.filter(f => f.type === 'Actor');
+  const partyFolder = actorFolders.find(f => (f.name || '').toLowerCase() === 'party');
+
   // Note: We do not include an actor select. The module uses the currently controlled tokens (supports multiple).
-  // If no tokens are controlled, it falls back to the party (player characters).
+  // If no tokens are controlled, it falls back to the party (player characters) or the 'party' actor folder if present.
   const selectionNote = (canvas?.tokens?.controlled?.length > 0)
     ? `<p><em>Using ${canvas.tokens.controlled.length} selected token(s).</em></p>`
-    : `<p><em>No tokens selected — will use the whole party (player characters / actors with player owners).</em></p>`;
+    : (partyFolder ? `<p><em>No tokens selected — will use actors in the \"${escapeHtml(partyFolder.name)}\" folder.</em></p>`
+      : `<p><em>No tokens selected — will use the whole party (player characters / actors with player owners).</em></p>`);
 
   const content = `
     <form>
-      <div class="form-group">
+      <div class=\"form-group\">
         <label>Skill:</label>
-        <select id="skill-select" name="skill">
+        <select id=\"skill-select\" name=\"skill\">
           ${skillOptions}
         </select>
       </div>
-      <div class="form-group">
+      <div class=\"form-group\">
         <label>DC:</label>
-        <input type="number" id="dc-input" name="dc" value="15" min="1" max="100"/>
+        <input type=\"number\" id=\"dc-input\" name=\"dc\" value=\"15\" min=\"1\" max=\"100\"/>
       </div>
-      <div class="form-group">
+      <div class=\"form-group\">
         <label>Creature Name (optional):</label>
-        <input type="text" id="creature-name" name="creature" placeholder="Unknown Creature"/>
+        <input type=\"text\" id=\"creature-name\" name=\"creature\" placeholder=\"Unknown Creature\"/>
       </div>
-      <div class="form-group">
+      <div class=\"form-group\">
         ${selectionNote}
         <p><em>Note: If you want to check specific actors, select their tokens before opening this dialog.</em></p>
       </div>
@@ -272,12 +292,12 @@ function openRecallKnowledgeDialog() {
     content: content,
     buttons: {
       roll: {
-        icon: '<i class="fas fa-dice-d20"></i>',
+        icon: '<i class=\"fas fa-dice-d20\"></i>',
         label: "Roll for Targets",
         callback: (html) => performRecallKnowledge(html)
       },
       cancel: {
-        icon: '<i class="fas fa-times"></i>',
+        icon: '<i class=\"fas fa-times\"></i>',
         label: "Cancel"
       }
     },
