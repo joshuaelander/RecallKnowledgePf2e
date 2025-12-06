@@ -24,7 +24,7 @@ async function createRecallKnowledgeMacro() {
     if (existingMacro) return;
 
     await Macro.create({
-      name: 'Recall Knowledge',
+      name: 'Quick Recall Knowledge',
       type: 'script',
       img: 'icons/skills/trades/academics-study-reading-book.webp',
       command: 'game.recallKnowledge.openDialog();',
